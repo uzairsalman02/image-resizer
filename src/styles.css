@@ -428,3 +428,39 @@ dd {
     width: 100%;
   }
 }
+.footer {
+  margin-top: 48px;
+  padding: 24px 16px;
+  text-align: center;
+  border-top: 1px solid #e5e7eb;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.footer p {
+  margin: 0 0 12px;
+}
+
+.footer strong {
+  color: #111827;
+}
+
+.heart {
+  color: #ef4444;
+}
+
+.github-star {
+  display: inline-block;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: #111827;
+  color: #ffffff;
+  text-decoration: none;
+  font-weight: 600;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.github-star:hover {
+  transform: translateY(-2px);
+  opacity: 0.9;
+}
