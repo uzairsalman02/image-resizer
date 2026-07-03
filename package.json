@@ -1,0 +1,22 @@
+{
+  "name": "image-resizer",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "@imgly/background-removal": "^1.7.0",
+    "@vitejs/plugin-react": "latest",
+    "browser-image-compression": "latest",
+    "file-saver": "latest",
+    "jszip": "latest",
+    "onnxruntime-web": "1.21.0",
+    "react": "latest",
+    "react-dom": "latest",
+    "vite": "latest"
+  }
+}
