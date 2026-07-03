@@ -562,12 +562,20 @@ function App() {
           )}
         </div>
       </section>
-      <footer className="footer-note">
-        ❤️ Crafted with passion by Uzair Salman
-
-If this tool made your work easier, please consider giving this project a <a href="https://github.com/uzairsalman02/image-resizer" target="_blank" rel="noopener noreferrer">
-    ⭐ Star on GitHub</a>. It costs nothing but means a lot and helps support future improvements.
-        </footer>
+      <footer className="footer">
+      <p>
+        Made with <span className="heart">❤️</span> by{" "}
+        <strong>Uzair Salman</strong>
+      </p>
+      <a
+        href="https://github.com/uzairsalman02/image-resizer"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="github-star"
+      >
+        ⭐ Star on GitHub
+      </a>
+</footer>
     </main>
   );
 }
