@@ -6,7 +6,8 @@ A React + Vite bulk image resizing and compression tool. Normal resize and compr
 
 - Upload multiple JPG, PNG, or WebP images.
 - Optionally remove image backgrounds in the browser with `@imgly/background-removal`.
-- Resize every image to a custom width and height.
+- Resize every image by pixels, inches, centimeters, or millimeters.
+- Convert physical units to pixels with a DPI/PPI setting.
 - Compress toward a target file size, defaulting to 25 KB.
 - After background removal, keep transparency or apply white, sky blue, or a custom color.
 - Background removal uses a smaller temporary 1200px copy, times out after 60 seconds, and falls back to the original image if needed.
@@ -37,12 +38,15 @@ This project includes a GitHub Pages workflow in `.github/workflows/deploy.yml`.
 ## Usage
 
 1. Choose one or more supported image files.
-2. Enter the width, height, and target file size in KB.
-3. Optional: check **Remove background**.
-4. If background removal is enabled, choose transparent, white, sky blue, or a custom color.
-5. Confirm large images if the warning appears.
-6. Click **Process Images**.
-7. Download individual resized files or use **Download All as ZIP**.
+2. Choose a unit: pixels, inches, centimeters, or millimeters.
+3. Enter width and height, or use a preset.
+4. For physical units, set DPI/PPI. The app shows the final pixel output before processing.
+5. Enter the target file size in KB.
+6. Optional: check **Remove background**.
+7. If background removal is enabled, choose transparent, white, sky blue, or a custom color.
+8. Confirm large images if the warning appears.
+9. Click **Process Images**.
+10. Download individual resized files or use **Download All as ZIP**.
 
 ## Notes
 

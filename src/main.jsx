@@ -17,6 +17,38 @@ const acceptedTypes = ['image/jpeg', 'image/png', 'image/webp'];
 const largeImageLimitBytes = 5 * 1024 * 1024;
 const removalTimeoutMs = 60_000;
 const removalInputMaxSize = 1200;
+const unitOptions = {
+  pixels: { label: 'Pixels', suffix: 'px' },
+  inches: { label: 'Inches', suffix: 'in' },
+  centimeters: { label: 'Centimeters', suffix: 'cm' },
+  millimeters: { label: 'Millimeters', suffix: 'mm' },
+};
+
+const sizePresets = {
+  pixels: [
+    { label: '400 x 600 px', width: 400, height: 600 },
+    { label: '600 x 800 px', width: 600, height: 800 },
+    { label: '1080 x 1350 px', width: 1080, height: 1350 },
+  ],
+  inches: [
+    { label: 'Passport Size: 2 x 2 in', width: 2, height: 2 },
+    { label: '4 x 6 in', width: 4, height: 6 },
+    { label: '5 x 7 in', width: 5, height: 7 },
+    { label: 'A4: 8.27 x 11.69 in', width: 8.27, height: 11.69 },
+  ],
+  centimeters: [
+    { label: 'Passport Size: 3.5 x 4.5 cm', width: 3.5, height: 4.5 },
+    { label: '10 x 15 cm', width: 10, height: 15 },
+    { label: '13 x 18 cm', width: 13, height: 18 },
+    { label: 'A4: 21 x 29.7 cm', width: 21, height: 29.7 },
+  ],
+  millimeters: [
+    { label: 'Passport Size: 35 x 45 mm', width: 35, height: 45 },
+    { label: '100 x 150 mm', width: 100, height: 150 },
+    { label: '130 x 180 mm', width: 130, height: 180 },
+    { label: 'A4: 210 x 297 mm', width: 210, height: 297 },
+  ],
+};
 
 function bytesToKb(bytes) {
   return bytes / 1024;
@@ -32,9 +64,65 @@ function outputExtension(type) {
   return 'jpg';
 }
 
-function cleanFileName(name, type) {
-  const base = name.replace(/\.[^/.]+$/, '');
-  return `${base}-resized.${outputExtension(type)}`;
+function sanitizeFileBase(name) {
+  return name
+    .replace(/\.[^/.]+$/, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-_]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || 'image';
+}
+
+function createDownloadName(name, type, pixelSize, targetKb) {
+  const base = sanitizeFileBase(name);
+  const roundedTarget = Math.max(1, Math.round(Number(targetKb) || 25));
+  return `${base}_${pixelSize.width}x${pixelSize.height}_${roundedTarget}KB.${outputExtension(type)}`;
+}
+
+function createZipName() {
+  return `image-resizer_${new Date().toISOString().slice(0, 10)}.zip`;
+}
+
+function progressForStatus(status) {
+  const progressMap = {
+    Waiting: 0,
+    'Loading AI model': 12,
+    'Removing background': 30,
+    'Applying background': 52,
+    Resizing: 70,
+    Compressing: 86,
+    'Timed out': 55,
+    Done: 100,
+    Failed: 100,
+  };
+  return progressMap[status] ?? 0;
+}
+
+function calculatePixelSize(width, height, unit, dpi) {
+  const numericWidth = Number(width) || 1;
+  const numericHeight = Number(height) || 1;
+  const numericDpi = Math.max(1, Number(dpi) || 300);
+
+  // Unit conversion always ends in pixels because canvas resizing needs pixel
+  // dimensions. Physical units are converted through inches, then multiplied by DPI/PPI.
+  if (unit === 'pixels') {
+    return {
+      width: Math.max(1, Math.round(numericWidth)),
+      height: Math.max(1, Math.round(numericHeight)),
+    };
+  }
+
+  const widthInInches =
+    unit === 'inches' ? numericWidth : unit === 'centimeters' ? numericWidth / 2.54 : numericWidth / 25.4;
+  const heightInInches =
+    unit === 'inches' ? numericHeight : unit === 'centimeters' ? numericHeight / 2.54 : numericHeight / 25.4;
+
+  return {
+    width: Math.max(1, Math.round(widthInInches * numericDpi)),
+    height: Math.max(1, Math.round(heightInInches * numericDpi)),
+  };
 }
 
 async function loadImage(source) {
@@ -129,7 +217,7 @@ async function resizeCanvas(sourceCanvas, width, height) {
   return canvas;
 }
 
-async function compressCanvasImage(canvas, file, targetKb, keepsTransparency) {
+async function compressCanvasImage(canvas, file, targetKb, keepsTransparency, pixelSize) {
   const targetBytes = targetKb * 1024;
   const outputType = keepsTransparency ? 'image/png' : 'image/jpeg';
 
@@ -143,7 +231,7 @@ async function compressCanvasImage(canvas, file, targetKb, keepsTransparency) {
     const quality = (low + high) / 2;
     const canvasBlob = await canvasToBlob(canvas, outputType, quality);
     const compressedFile = await imageCompression(
-      new File([canvasBlob], cleanFileName(file.name, outputType), { type: outputType }),
+      new File([canvasBlob], createDownloadName(file.name, outputType, pixelSize, targetKb), { type: outputType }),
       {
         maxSizeMB: targetKb / 1024,
         maxWidthOrHeight: Math.max(canvas.width, canvas.height),
@@ -186,18 +274,21 @@ async function compressCanvasImage(canvas, file, targetKb, keepsTransparency) {
     isOverTarget,
     strongLoss,
     url: URL.createObjectURL(finalResult.blob),
-    fileName: cleanFileName(file.name, finalResult.type),
+    fileName: createDownloadName(file.name, finalResult.type, pixelSize, targetKb),
   };
 }
 
 function App() {
   const [width, setWidth] = useState(600);
   const [height, setHeight] = useState(800);
+  const [unit, setUnit] = useState('pixels');
+  const [dpi, setDpi] = useState(300);
   const [targetKb, setTargetKb] = useState(25);
   const [removeBackground, setRemoveBackground] = useState(false);
   const [background, setBackground] = useState('transparent');
   const [customColor, setCustomColor] = useState('#f8d66d');
   const [allowLargeRemoval, setAllowLargeRemoval] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const [items, setItems] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const fileInputRef = useRef(null);
@@ -211,6 +302,27 @@ function App() {
     () => items.some((item) => item.file?.size > largeImageLimitBytes),
     [items],
   );
+  const finalPixelSize = useMemo(
+    () => calculatePixelSize(width, height, unit, dpi),
+    [width, height, unit, dpi],
+  );
+  const processedCount = useMemo(
+    () => items.filter((item) => item.status === 'Done' || item.status === 'Failed').length,
+    [items],
+  );
+  const overallProgress = items.length ? Math.round((processedCount / items.length) * 100) : 0;
+
+  function changeUnit(nextUnit) {
+    setUnit(nextUnit);
+    const firstPreset = sizePresets[nextUnit][0];
+    setWidth(firstPreset.width);
+    setHeight(firstPreset.height);
+  }
+
+  function applyPreset(preset) {
+    setWidth(preset.width);
+    setHeight(preset.height);
+  }
 
   function addFiles(files) {
     const validFiles = files.filter((file) => acceptedTypes.includes(file.type));
@@ -223,6 +335,7 @@ function App() {
       originalSize: file.size,
       newSize: null,
       status: 'Waiting',
+      progress: 0,
       warning: '',
       result: null,
     }));
@@ -248,6 +361,7 @@ function App() {
           ...item,
           newSize: null,
           status: 'Waiting',
+          progress: 0,
           warning: '',
           result: null,
         };
@@ -293,7 +407,7 @@ function App() {
             setItems((current) =>
               current.map((item) =>
                 item.id === queuedItem.id
-                  ? { ...item, status: isTimeout ? 'Timed out' : 'Using original image' }
+                  ? { ...item, status: isTimeout ? 'Timed out' : 'Failed' }
                   : item,
               ),
             );
@@ -303,14 +417,14 @@ function App() {
             keepsTransparency = queuedItem.file.type === 'image/png';
             source = queuedItem.file;
             await new Promise((resolve) => window.setTimeout(resolve, 200));
-            setItems((current) =>
-              current.map((item) =>
-                item.id === queuedItem.id ? { ...item, status: 'Using original image' } : item,
-              ),
-            );
           }
         }
 
+        setItems((current) =>
+          current.map((item) =>
+            item.id === queuedItem.id ? { ...item, status: 'Applying background' } : item,
+          ),
+        );
         const backgroundCanvas = removeBackground
           ? await applyBackgroundToCanvas(source, background, customColor)
           : await applyBackgroundToCanvas(source, 'transparent', customColor);
@@ -320,7 +434,7 @@ function App() {
             item.id === queuedItem.id ? { ...item, status: 'Resizing' } : item,
           ),
         );
-        const resizedCanvas = await resizeCanvas(backgroundCanvas, Number(width), Number(height));
+        const resizedCanvas = await resizeCanvas(backgroundCanvas, finalPixelSize.width, finalPixelSize.height);
 
         setItems((current) =>
           current.map((item) =>
@@ -332,6 +446,7 @@ function App() {
           queuedItem.file,
           Number(targetKb),
           removeBackground ? keepsTransparency && background === 'transparent' : keepsTransparency,
+          finalPixelSize,
         );
         const warning = [removalWarning, result.warning].filter(Boolean).join(' ');
 
@@ -341,6 +456,7 @@ function App() {
               ? {
                   ...item,
                   status: 'Done',
+                  progress: 100,
                   newSize: result.size,
                   warning,
                   result,
@@ -368,7 +484,7 @@ function App() {
       zip.file(item.result.fileName, item.result.blob);
     });
     const zipBlob = await zip.generateAsync({ type: 'blob' });
-    saveAs(zipBlob, 'image-resizer-files.zip');
+    saveAs(zipBlob, createZipName());
   }
 
   function clearList() {
@@ -383,17 +499,44 @@ function App() {
     <main className="app-shell">
       <section className="hero">
         <div>
-          <p className="eyebrow">Client-side classroom tool</p>
+          <p className="eyebrow">FAST • PRIVATE • FREE</p>
           <h1>Image Resizer</h1>
           <p className="intro">
-            Resize and compress JPG, PNG, and WebP files in your browser. Images stay on this device.
+            Resize, compress, and optimize your images in seconds. No uploads — everything happens securely in your browser.
           </p>
         </div>
       </section>
 
       <section className="workspace" aria-label="Image resizing controls">
         <div className="controls-panel">
-          <label className="upload-zone">
+          <label
+            className={`upload-zone ${isDragging ? 'dragging' : ''}`}
+            tabIndex="0"
+            onDragEnter={(event) => {
+              event.preventDefault();
+              setIsDragging(true);
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              setIsDragging(true);
+            }}
+            onDragLeave={(event) => {
+              event.preventDefault();
+              setIsDragging(false);
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              setIsDragging(false);
+              addFiles(Array.from(event.dataTransfer.files || []));
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                fileInputRef.current?.click();
+              }
+            }}
+            aria-label="Upload JPG, PNG, or WebP images"
+          >
             <input
               ref={fileInputRef}
               type="file"
@@ -401,29 +544,57 @@ function App() {
               multiple
               onChange={(event) => addFiles(Array.from(event.target.files || []))}
             />
-            <span className="upload-title">Choose images</span>
-            <span className="upload-copy">Select multiple JPG, PNG, or WebP files</span>
+            <span className="upload-title">Drag & Drop Images Here</span>
+            <span className="browse-text">or Browse Files</span>
+            <span className="upload-copy">Supports JPG, PNG, and WebP</span>
           </label>
+
+          <div className="unit-row">
+            <label>
+              Unit
+              <select value={unit} onChange={(event) => changeUnit(event.target.value)}>
+                {Object.entries(unitOptions).map(([key, option]) => (
+                  <option key={key} value={key}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
 
           <div className="control-grid">
             <label>
-              Width
+              Width ({unitOptions[unit].suffix})
               <input
                 type="number"
-                min="1"
+                min="0.01"
+                step={unit === 'pixels' ? '1' : '0.01'}
                 value={width}
                 onChange={(event) => setWidth(event.target.value)}
               />
             </label>
             <label>
-              Height
+              Height ({unitOptions[unit].suffix})
               <input
                 type="number"
-                min="1"
+                min="0.01"
+                step={unit === 'pixels' ? '1' : '0.01'}
                 value={height}
                 onChange={(event) => setHeight(event.target.value)}
               />
             </label>
+            {unit !== 'pixels' && (
+              <label>
+                DPI/PPI
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={dpi}
+                  onChange={(event) => setDpi(event.target.value)}
+                />
+              </label>
+            )}
             <label>
               Target KB
               <input
@@ -434,6 +605,23 @@ function App() {
               />
             </label>
           </div>
+
+          <div className="preset-group" aria-label="Size presets">
+            {sizePresets[unit].map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                className="preset-button"
+                onClick={() => applyPreset(preset)}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+
+          <p className="final-size">
+            Final output: {finalPixelSize.width} x {finalPixelSize.height} px
+          </p>
 
           <label className="toggle-row">
             <input
@@ -496,14 +684,26 @@ function App() {
             <button
               type="button"
               onClick={processImages}
+              aria-label="Process uploaded images"
               disabled={!items.length || isProcessing || (removeBackground && hasLargeImages && !allowLargeRemoval)}
             >
               {isProcessing ? 'Processing...' : 'Process Images'}
             </button>
-            <button type="button" onClick={downloadAll} disabled={!completedItems.length}>
+            <button
+              type="button"
+              onClick={downloadAll}
+              aria-label="Download all processed images as ZIP"
+              disabled={!completedItems.length}
+            >
               Download All as ZIP
             </button>
-            <button type="button" className="secondary" onClick={clearList} disabled={!items.length}>
+            <button
+              type="button"
+              className="secondary"
+              onClick={clearList}
+              aria-label="Clear image list"
+              disabled={!items.length}
+            >
               Clear
             </button>
           </div>
@@ -515,9 +715,22 @@ function App() {
             <span>{isProcessing ? 'Working...' : `${items.length} image${items.length === 1 ? '' : 's'}`}</span>
           </div>
 
+          {isProcessing && (
+            <section className="overall-progress" aria-label="Overall processing progress">
+              <div className="progress-heading">
+                <strong>Overall Progress</strong>
+                <span>{processedCount} / {items.length} images processed</span>
+              </div>
+              <div className="progress-track">
+                <span style={{ width: `${overallProgress}%` }} />
+              </div>
+            </section>
+          )}
+
           {items.length === 0 ? (
             <div className="empty-state">
-              <p>Uploaded images will appear here with file sizes, status, warnings, and download buttons.</p>
+              <strong>🖼 No images selected</strong>
+              <p>Upload images to start resizing and compressing.</p>
             </div>
           ) : (
             <div className="image-list">
@@ -546,6 +759,9 @@ function App() {
                         <dd>{item.status}</dd>
                       </div>
                     </dl>
+                    <div className="item-progress" aria-label={`Progress for ${item.name}`}>
+                      <span style={{ width: `${progressForStatus(item.status)}%` }} />
+                    </div>
                     {item.warning && <p className="warning">{item.warning}</p>}
                   </div>
                   <button
@@ -562,7 +778,25 @@ function App() {
           )}
         </div>
       </section>
-      <footer className="footer-note">made with ♥ by uzair salman</footer>
+      <footer className="footer">
+        <div className="footer-content">
+          <p>
+            Built with <span className="heart">❤️</span> by <strong>Uzair Salman</strong>
+          </p>
+          <p className="footer-text">
+            If this tool saved you time, please support its development by giving the
+            project a star on GitHub.
+          </p>
+          <a
+            href="https://github.com/uzairsalman02/image-resizer"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="github-star"
+          >
+            ⭐ Star this Project on GitHub
+          </a>
+        </div>
+      </footer>
     </main>
   );
 }
